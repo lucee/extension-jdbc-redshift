@@ -1,0 +1,13 @@
+/dist
+/notUsedYet
+**/Test.java
+**/.DS_Store
+**/.svn/
+/*.project
+va specific
+*.class
+target
+target/*
+*.lock
+*.DS_Store
+.flattened-pom.xml
