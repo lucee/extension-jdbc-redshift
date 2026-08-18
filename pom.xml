@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.lucee</groupId>
     <artifactId>redshift-jdbc-extension</artifactId>
-    <version>2.2.8</version>
+    <version>2.2.8.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Amazon Redshift JDBC</name>
 
@@ -25,12 +25,11 @@
         <snapshot.url>https://oss.sonatype.org/content/repositories/snapshots/</snapshot.url>
     </properties>
 
-    <!-- The Amazon Redshift driver ships no OSGi headers, so we embed an
-         OSGi-wrapped build of it, org.lucee.redshift-jdbc42-${project.version}.jar
-         (produced by the Tools/osgi mavenjar2osgi generator), committed in the repo
-         root. build.xml reads that jar, embeds it into the .lex, and registers the
-         driver by bundleName/bundleVersion (pure OSGi). No Maven dependency on the
-         driver, so the build is self-contained and needs no Maven Central artifact. -->
+    <!-- The Amazon Redshift driver ships no OSGi headers, so we depend on the
+         OSGi-wrapped bundle org.lucee:redshift. build.xml fetches that jar (via
+         copy-dependencies), reads its Bundle-SymbolicName/Version, embeds it into the
+         .lex under jars/, and registers the driver by bundleName/bundleVersion (pure
+         OSGi). The bundle currently lives on the Sonatype snapshots repository. -->
     <dependencies>
         <dependency>
             <groupId>org.openjdk.nashorn</groupId>
@@ -38,7 +37,23 @@
             <version>15.4</version>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>org.lucee</groupId>
+            <artifactId>redshift</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
+
+    <!-- The OSGi-wrapped driver bundle is a SNAPSHOT on the Sonatype (Central) snapshots
+         repository; needed until it is released to Maven Central. -->
+    <repositories>
+        <repository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases><enabled>false</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
 
     <scm>
         <url>https://github.com/lucee/extension-jdbc-redshift</url>
@@ -146,6 +161,31 @@
                 </executions>
             </plugin>
 
+            <!-- Fetch the OSGi-wrapped driver bundle into the project dir so build.xml
+                 can read/embed it -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-redshift-bundle</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeGroupIds>org.lucee</includeGroupIds>
+                            <includeArtifactIds>redshift</includeArtifactIds>
+                            <includeVersion>${project.version}</includeVersion>
+                            <outputDirectory>${project.basedir}</outputDirectory>
+                            <overWriteReleases>false</overWriteReleases>
+                            <overWriteSnapshots>true</overWriteSnapshots>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Antrun plugin to execute the Ant build -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -174,6 +214,13 @@
                                     <property name="jdbcid" value="${jdbcid}"/>
                                     <property name="connstr" value="${connstr}"/>
                                 </ant>
+
+                                <!-- Clean up the fetched bundle jar after ant build -->
+                                <delete>
+                                    <fileset dir="${project.basedir}">
+                                        <include name="redshift-*.jar"/>
+                                    </fileset>
+                                </delete>
 
                                 <condition property="isSnapshot" value="true" else="false">
                                     <matches string="${project.version}" pattern=".*-SNAPSHOT"/>

@@ -1,8 +1,8 @@
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 
-	// keep in sync with the embedded bundle (org.lucee.redshift-jdbc42-<version>.jar)
+	// keep in sync with pom.xml project.version (== the embedded driver bundle version)
 	variables.bundleName    = "org.lucee.redshift-jdbc42";
-	variables.bundleVersion = "2.2.8";
+	variables.bundleVersion = "2.2.8.0-SNAPSHOT";
 	variables.driverClass   = "com.amazon.redshift.Driver";
 
 	/**
@@ -29,8 +29,13 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 	private boolean function isEnvSkip( required struct loaded ) {
 		if ( arguments.loaded.ok ) return false;
 		var err = arguments.loaded.error;
+		// a real OSGi resolution failure (unresolved package requirement) must fail the test
 		if ( findNoCase( "missing requirement", err ) || findNoCase( "Unresolved requirement", err ) ) return false;
-		return findNoCase( "load", err ) && findNoCase( "bundle", err );
+		// the bundle is simply not present/resolvable in this environment (e.g. a SNAPSHOT
+		// not yet on Maven Central / the Lucee update provider) -> skip rather than fail
+		return findNoCase( "not available", err )
+			|| findNoCase( "update provider", err )
+			|| ( findNoCase( "load", err ) && findNoCase( "bundle", err ) );
 	}
 
 	function run( testResults, testBox ) {
