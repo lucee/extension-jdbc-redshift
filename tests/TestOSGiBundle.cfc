@@ -6,68 +6,82 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 	variables.driverClass   = "com.amazon.redshift.Driver";
 
 	/**
-	* Loads the driver class from the embedded OSGi bundle. This is the exact path
-	* (JavaProxy -> loadBundle -> OSGi resolve) that fails when a required package is
-	* missing from the bundle's Import-Package, so it verifies the wrapped bundle
-	* actually resolves - no live Amazon Redshift cluster required.
+	* Builds a Redshift datasource pointing at an unreachable host and tries to use it.
+	* Using the datasource forces Lucee to load the driver out of the OSGi bundle, so the
+	* resulting exception tells us exactly what we want to know - with NO live Redshift and
+	* NO skipping:
+	*   - a CONNECTION error   => the OSGi bundle loaded and the driver works        (PASS)
+	*   - a BUNDLE-LOAD error   => the extension's OSGi bundle is missing/unresolved  (FAIL)
 	*/
-	private struct function loadDriver() {
-		var res = { ok: false, error: "" };
+	private struct function useUnreachableDatasource() {
+		var res = { connected: false, error: "" };
+		var ds = {
+			  class: variables.driverClass
+			, bundleName: variables.bundleName
+			, bundleVersion: variables.bundleVersion
+			// nothing listens on 127.0.0.1:5439 in CI -> a fast "connection refused"
+			, connectionString: "jdbc:redshift://127.0.0.1:5439/dev?loginTimeout=5"
+			, username: "lucee"
+			, password: "lucee"
+		};
 		try {
-			res.driver = createObject( "java", variables.driverClass, variables.bundleName, variables.bundleVersion );
-			res.ok = true;
+			queryExecute( "SELECT 1", [], { datasource: ds } );
+			res.connected = true; // not expected against a dead host, but means the bundle loaded
 		} catch ( any e ) {
 			res.error = e.message & " | " & ( e.detail ?: "" );
 		}
 		return res;
 	}
 
-	/**
-	* A bundle that is simply not deployed in this environment is skipped, but a real
-	* OSGi *resolution* failure (an unresolved package requirement) must fail the test.
-	*/
-	private boolean function isEnvSkip( required struct loaded ) {
-		if ( arguments.loaded.ok ) return false;
-		var err = arguments.loaded.error;
-		// a real OSGi resolution failure (unresolved package requirement) must fail the test
-		if ( findNoCase( "missing requirement", err ) || findNoCase( "Unresolved requirement", err ) ) return false;
-		// the bundle is simply not present/resolvable in this environment (e.g. a SNAPSHOT
-		// not yet on Maven Central / the Lucee update provider) -> skip rather than fail
-		return findNoCase( "not available", err )
-			|| findNoCase( "update provider", err )
-			|| ( findNoCase( "load", err ) && findNoCase( "bundle", err ) );
+	// The OSGi bundle failing to load/resolve is the failure we must catch (e.g. a missing
+	// Import-Package like org.bouncycastle.jsse.provider, or the bundle not being deployed).
+	private boolean function isBundleLoadFailure( required string err ) {
+		var m = arguments.err;
+		return findNoCase( "OSGi Bundle", m )
+			|| findNoCase( "not available", m )
+			|| findNoCase( "Unable to resolve", m )
+			|| findNoCase( "missing requirement", m )
+			|| findNoCase( "Unresolved requirement", m )
+			|| ( findNoCase( "unable to load", m ) && findNoCase( "bundle", m ) );
+	}
+
+	// The failure we EXPECT: the driver loaded and could not reach the unreachable host.
+	private boolean function isConnectionFailure( required string err ) {
+		var m = arguments.err;
+		return findNoCase( "refused", m )
+			|| findNoCase( "Connection to", m )
+			|| findNoCase( "connection attempt failed", m )
+			|| findNoCase( "could not connect", m )
+			|| findNoCase( "timeout", m ) || findNoCase( "timed out", m )
+			|| findNoCase( "UnknownHost", m ) || findNoCase( "route to host", m );
 	}
 
 	function run( testResults, testBox ) {
-		variables.loaded = loadDriver();
-		var envSkip = isEnvSkip( variables.loaded );
+		variables.outcome = useUnreachableDatasource();
 
-		if ( envSkip ) {
-			systemOutput( "Amazon Redshift bundle [#variables.bundleName# #variables.bundleVersion#] not deployed in this environment; OSGi bundle test skipped (" & variables.loaded.error & ")", true );
-		}
-
-		describe( title="Amazon Redshift JDBC driver OSGi bundle", body=function() {
+		describe( title="Amazon Redshift JDBC driver via a datasource", body=function() {
 
 			it(
-				title="resolves bundle #variables.bundleName# #variables.bundleVersion# and loads #variables.driverClass#",
-				skip=envSkip,
+				title="loads the OSGi bundle and fails to connect to an unreachable host (never with a bundle-load error)",
 				body=function( currentSpec ) {
-					expect( variables.loaded.ok ).toBeTrue( "driver bundle failed to load/resolve: " & variables.loaded.error );
+					var o = variables.outcome;
 
-					var driver = variables.loaded.driver;
+					if ( o.connected ) {
+						// unexpected against a dead host, but it proves the bundle loaded
+						systemOutput( "Amazon Redshift datasource unexpectedly connected (OSGi bundle loaded ok)", true );
+						expect( true ).toBeTrue();
+						return;
+					}
 
-					// java.sql.Driver contract - proves the loaded class is the real driver
-					expect( driver.acceptsURL( "jdbc:redshift://localhost:5439/dev" ) ).toBeTrue();
-					expect( driver.acceptsURL( "jdbc:mysql://localhost:3306/dev" ) ).toBeFalse();
+					systemOutput( "Amazon Redshift datasource error: " & o.error, true );
 
-					var bundle = bundleInfo( driver );
-					systemOutput( "Amazon Redshift JDBC driver bundle info: " & serializeJSON( {
-						bundleName: bundle.name,
-						bundleVersion: bundle.version,
-						driverVersion: driver.getMajorVersion() & "." & driver.getMinorVersion()
-					} ), true );
+					// the driver's OSGi bundle MUST load - a bundle-load error is a hard failure
+					expect( isBundleLoadFailure( o.error ) ).toBeFalse(
+						"driver OSGi bundle failed to load (expected a connection error instead): " & o.error );
 
-					expect( bundle.name ).toBe( variables.bundleName );
+					// and the error we DO expect is a connection failure to the unreachable host
+					expect( isConnectionFailure( o.error ) ).toBeTrue(
+						"expected a connection failure to the unreachable host, got: " & o.error );
 				}
 			);
 		} );
