@@ -25,21 +25,18 @@
         <snapshot.url>https://oss.sonatype.org/content/repositories/snapshots/</snapshot.url>
     </properties>
 
-    <!-- The Amazon Redshift driver ships no OSGi headers, so we depend on the
-         OSGi-wrapped bundle org.lucee:redshift-jdbc42 (produced by the Tools/osgi
-         mavenjar2osgi generator). The build embeds that bundle jar into the .lex
-         and the driver is registered by bundleName/bundleVersion (pure OSGi). -->
+    <!-- The Amazon Redshift driver ships no OSGi headers, so we embed an
+         OSGi-wrapped build of it, org.lucee.redshift-jdbc42-${project.version}.jar
+         (produced by the Tools/osgi mavenjar2osgi generator), committed in the repo
+         root. build.xml reads that jar, embeds it into the .lex, and registers the
+         driver by bundleName/bundleVersion (pure OSGi). No Maven dependency on the
+         driver, so the build is self-contained and needs no Maven Central artifact. -->
     <dependencies>
         <dependency>
             <groupId>org.openjdk.nashorn</groupId>
             <artifactId>nashorn-core</artifactId>
             <version>15.4</version>
             <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.lucee</groupId>
-            <artifactId>redshift-jdbc42</artifactId>
-            <version>${project.version}</version>
         </dependency>
     </dependencies>
 
@@ -149,29 +146,6 @@
                 </executions>
             </plugin>
 
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.2.0</version>
-                <executions>
-                    <execution>
-                        <id>copy-redshift-jar</id>
-                        <phase>generate-resources</phase>
-                        <goals>
-                            <goal>copy-dependencies</goal>
-                        </goals>
-                        <configuration>
-                            <includeGroupIds>org.lucee</includeGroupIds>
-                            <includeArtifactIds>redshift-jdbc42</includeArtifactIds>
-                            <includeVersion>${project.version}</includeVersion>
-                            <outputDirectory>${project.basedir}</outputDirectory>
-                            <overWriteReleases>false</overWriteReleases>
-                            <overWriteSnapshots>true</overWriteSnapshots>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
             <!-- Antrun plugin to execute the Ant build -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -200,13 +174,6 @@
                                     <property name="jdbcid" value="${jdbcid}"/>
                                     <property name="connstr" value="${connstr}"/>
                                 </ant>
-
-                                <!-- Clean up the copied JAR after ant build -->
-                                <delete>
-                                    <fileset dir="${project.basedir}">
-                                        <include name="redshift-jdbc42-*.jar"/>
-                                    </fileset>
-                                </delete>
 
                                 <condition property="isSnapshot" value="true" else="false">
                                     <matches string="${project.version}" pattern=".*-SNAPSHOT"/>

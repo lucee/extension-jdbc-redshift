@@ -16,26 +16,24 @@ generator), and registers the driver by its bundle name/version:
 jdbc: "[{'label':'Amazon Redshift JDBC Driver','id':'redshift','connectionString':'jdbc:redshift://{host}:{port}/{database}','class':'com.amazon.redshift.Driver','bundleName':'org.lucee.redshift-jdbc42','bundleVersion':'2.2.8'}]"
 ```
 
-The wrapped driver jar is embedded in the `.lex` under `jars/`, so the extension is
-self-contained and works on any Lucee 5.0.0.019+ (OSGi bundle loading). A Maven-based
-variant (registering the driver by Maven coordinate on Lucee 7.1.0.187+) can be added
-later as a second step.
+The OSGi-wrapped driver jar (`org.lucee.redshift-jdbc42-<version>.jar`) is committed
+in the repo root; the build reads it, embeds it in the `.lex` under `jars/`, and the
+extension works on any Lucee 5.0.0.019+ (OSGi bundle loading). Because the jar is
+committed, the build is fully self-contained and needs no Maven Central artifact.
+A Maven-based variant (registering the driver by Maven coordinate on Lucee 7.1.0.187+)
+can be added later as a second step.
 
 ## Build
 
-The extension depends on the OSGi-wrapped driver bundle `org.lucee:redshift-jdbc42`.
-Once that bundle is published to Maven Central, `mvn clean install` resolves it
-automatically. Until then, install the locally built bundle into your local
-repository first:
-
 ```bash
-mvn install:install-file \
-  -Dfile=/path/to/org.lucee.redshift-jdbc42-2.2.8.jar \
-  -DgroupId=org.lucee -DartifactId=redshift-jdbc42 -Dversion=2.2.8 -Dpackaging=jar
 mvn clean install
 ```
 
 The build produces `target/redshift-jdbc-extension-<version>.lex`.
+
+To update the driver, regenerate the wrapped bundle with the `Tools/osgi`
+`mavenjar2osgi` generator, replace the committed `org.lucee.redshift-jdbc42-*.jar`
+in the repo root, and bump the version in `pom.xml`.
 
 ## Connection string
 
