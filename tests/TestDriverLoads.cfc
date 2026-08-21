@@ -20,11 +20,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 	variables.mavenCoord    = "com.amazon.redshift:redshift-jdbc42:2.2.8";
 
 	private boolean function mavenNotSupported() {
-		try {
-			return !server.checkVersionGTE( server.lucee.version, 7, 1, 0, 187 );
-		} catch ( any e ) {
-			return true;
-		}
+		return !server.checkVersionGTE( server.lucee.version, 7, 1, 0, 187 );
 	}
 
 	function run( testResults, testBox ) {
