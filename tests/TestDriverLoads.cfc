@@ -6,18 +6,25 @@
  *   - a CONNECTION error   => the driver loaded and works           (what we EXPECT)
  *   - a LOAD error         => the driver could not be loaded        (what we do NOT expect)
  *
- * The extension ships the driver twice, so both load paths are checked:
- *   - OSGi  : bundleName/bundleVersion of the wrapped bundle org.lucee.redshift-jdbc42
+ * The driver coordinates are NOT hardcoded here - they are read from the environment
+ * (DRIVER_CLASS, BUNDLE_NAME, BUNDLE_VERSION, MAVEN_COORD), set by the CI workflow (see
+ * .github/workflows/main.yml), so this test carries no version/bundle knowledge of its own.
+ * Both load paths are checked:
+ *   - OSGi  : bundleName/bundleVersion of the wrapped bundle
  *   - Maven : the original com.amazon.redshift:redshift-jdbc42 (Lucee 7.1.0.187+ only)
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 
-	variables.driverClass = "com.amazon.redshift.Driver";
-	// OSGi wrapped bundle - version tracks org.lucee:redshift, NOT the extension version
-	variables.bundleName    = "org.lucee.redshift-jdbc42";
-	variables.bundleVersion = "2.2.8.0";
-	// original AWS driver on Maven Central
-	variables.mavenCoord    = "com.amazon.redshift:redshift-jdbc42:2.2.8";
+	// driver coordinates come from the environment: DRIVER_CLASS, BUNDLE_NAME, BUNDLE_VERSION, MAVEN_COORD
+	variables.deadHost = "jdbc:redshift://127.0.0.1:5439/dev?loginTimeout=5";
+
+	private boolean function notConfigured() {
+		var env = server.system.environment;
+		return !structKeyExists( env, "DRIVER_CLASS" )
+			|| !structKeyExists( env, "BUNDLE_NAME" )
+			|| !structKeyExists( env, "BUNDLE_VERSION" )
+			|| !structKeyExists( env, "MAVEN_COORD" );
+	}
 
 	private boolean function mavenNotSupported() {
 		return !server.checkVersionGTE( server.lucee.version, 7, 1, 0, 187 );
@@ -27,11 +34,11 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 
 		describe( "Amazon Redshift JDBC driver via a datasource", function() {
 
-			it( title="OSGi path: loads the wrapped bundle and reaches the connect stage", body=function() {
+			it( title="OSGi path: loads the wrapped bundle and reaches the connect stage", skip=notConfigured(), body=function() {
 				assertLoadsThenFailsToConnect( getOsgiDatasource(), "OSGi" );
 			});
 
-			it( title="Maven path: loads the AWS driver from maven and reaches the connect stage", skip=mavenNotSupported(), body=function() {
+			it( title="Maven path: loads the AWS driver from maven and reaches the connect stage", skip=notConfigured() || mavenNotSupported(), body=function() {
 				assertLoadsThenFailsToConnect( getMavenDatasource(), "Maven" );
 			});
 
@@ -75,19 +82,19 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 
 	private struct function getOsgiDatasource() {
 		return {
-			  class: variables.driverClass
-			, bundleName: variables.bundleName
-			, bundleVersion: variables.bundleVersion
-			, connectionString: "jdbc:redshift://127.0.0.1:5439/dev?loginTimeout=5"
+			  class: server.system.environment.DRIVER_CLASS
+			, bundleName: server.system.environment.BUNDLE_NAME
+			, bundleVersion: server.system.environment.BUNDLE_VERSION
+			, connectionString: variables.deadHost
 			, username: "lucee", password: "lucee", validate: false
 		};
 	}
 
 	private struct function getMavenDatasource() {
 		return {
-			  class: variables.driverClass
-			, maven: variables.mavenCoord
-			, connectionString: "jdbc:redshift://127.0.0.1:5439/dev?loginTimeout=5"
+			  class: server.system.environment.DRIVER_CLASS
+			, maven: server.system.environment.MAVEN_COORD
+			, connectionString: variables.deadHost
 			, username: "lucee", password: "lucee", validate: false
 		};
 	}
