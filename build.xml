@@ -1,126 +1,74 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project default="clean" basedir="." name="redshift-jdbc-extension">
     <description>
-        Building Amazon Redshift JDBC Extension
+        Build Amazon Redshift JDBC Extension (maven + OSGi)
     </description>
 
-  <property name="temp" location="temp"/>
-  <property name="dist"  location="target"/>
+    <property name="temp" location="temp"/>
+    <property name="dist" location="target"/>
 
-  <scriptdef name="trim" language="javascript">
-     <attribute name="text" />
-     <attribute name="property" />
-     <![CDATA[
-      var text = attributes.get("text");
-      project.setProperty(attributes.get("property"), text.trim());
-     ]]>
-  </scriptdef>
+    <scriptdef name="trim" language="javascript">
+        <attribute name="text" />
+        <attribute name="property" />
+        <![CDATA[
+            var text = attributes.get("text");
+            project.setProperty(attributes.get("property"), text.trim());
+        ]]>
+    </scriptdef>
 
+    <scriptdef name="first" language="javascript">
+        <attribute name="text" />
+        <attribute name="property" />
+        <attribute name="default" />
+        <![CDATA[
+            var text = attributes.get("text").trim();
+            var def = attributes.get("default");
+            if (def && def.indexOf('${') == -1) text = def;
+            var arr = text.split(/\s+/);
+            project.setProperty(attributes.get("property"), arr[0]);
+        ]]>
+    </scriptdef>
 
-  <scriptdef name="first" language="javascript">
-     <attribute name="text" />
-     <attribute name="property" />
-     <attribute name="default" />
-     <![CDATA[
-      var text = attributes.get("text").trim();
-      var def = attributes.get("default");
+    <scriptdef name="replace" language="javascript">
+        <attribute name="haystack" />
+        <attribute name="needle" />
+        <attribute name="repl" />
+        <attribute name="property" />
+        <![CDATA[
+            var text = attributes.get("haystack").trim();
+            var regex = new RegExp(attributes.get("needle"), 'g');
+            text = text.replace(regex, attributes.get("repl"));
+            project.setProperty(attributes.get("property"), text);
+        ]]>
+    </scriptdef>
 
-      if(def && def.indexOf('${')==-1)
-        text=def;
+    <scriptdef name="unwrap" language="javascript">
+        <attribute name="text" />
+        <attribute name="property" />
+        <![CDATA[
+            var text = attributes.get("text").trim();
+            if (text.startsWith('"') && text.endsWith('"')) text = text.substring(1, text.length() - 1);
+            project.setProperty(attributes.get("property"), text);
+        ]]>
+    </scriptdef>
 
-      var arr=text.split(/\s+/);
-      text=arr[0];
+    <scriptdef name="getNameFrom" language="javascript">
+        <attribute name="path" />
+        <attribute name="property" />
+        <![CDATA[
+            var path = attributes.get("path");
+            var index = path.lastIndexOf('/');
+            if (index == -1) index = path.lastIndexOf('\\');
+            project.setProperty(attributes.get("property"), path.substring(index + 1));
+        ]]>
+    </scriptdef>
 
-      project.setProperty(attributes.get("property"), text);
-     ]]>
-  </scriptdef>
-
-  <scriptdef name="updateProp" language="javascript">
-     <attribute name="name" />
-     <attribute name="value" />
-     <![CDATA[
-      project.setProperty(attributes.get("name"), attributes.get("value"));
-     ]]>
-  </scriptdef>
-
-
-  <scriptdef name="replace" language="javascript">
-     <attribute name="haystack" />
-     <attribute name="needle" />
-     <attribute name="repl" />
-     <attribute name="property" />
-     <![CDATA[
-      var text = attributes.get("haystack");
-      var needle = attributes.get("needle");
-      var repl = attributes.get("repl");
-      text=text.trim();
-
-      var regex = new RegExp(needle,'g');
-      text=text.replace(regex,repl);
-      project.setProperty(attributes.get("property"), text);
-     ]]>
-  </scriptdef>
-
-  <scriptdef name="getDirFrom" language="javascript">
-     <attribute name="path" />
-     <attribute name="property" />
-     <![CDATA[
-      var path = attributes.get("path");
-      var index=path.lastIndexOf('/');
-      if(index==-1) index=path.lastIndexOf('\\');
-      path=path.substring(0,index);
-
-      project.setProperty(attributes.get("property"), path);
-     ]]>
-  </scriptdef>
-
-  <scriptdef name="getNameFrom" language="javascript">
-     <attribute name="path" />
-     <attribute name="property" />
-     <![CDATA[
-      var path = attributes.get("path");
-      var index=path.lastIndexOf('/');
-      if(index==-1) index=path.lastIndexOf('\\');
-      path=path.substring(index+1);
-
-      project.setProperty(attributes.get("property"), path);
-     ]]>
-  </scriptdef>
-
-  <scriptdef name="dot2line" language="javascript">
-     <attribute name="text" />
-     <attribute name="property" />
-     <![CDATA[
-      var text = attributes.get("text");
-      text=text.replace('.','_');
-
-      project.setProperty(attributes.get("property"), text);
-     ]]>
-  </scriptdef>
-
-  <scriptdef name="unwrap" language="javascript">
-     <attribute name="text" />
-     <attribute name="property" />
-     <![CDATA[
-      var text = attributes.get("text");
-      text=text.trim();
-      if(text.startsWith('"') && text.endsWith('"')) {
-        text=text.substring(1,text.length()-1);
-      }
-      project.setProperty(attributes.get("property"), text);
-     ]]>
-  </scriptdef>
-
-
-
-  <macrodef name="loadmf">
+    <macrodef name="loadmf">
         <attribute name="jar"/>
         <attribute name="prefix" default=""/>
         <sequential>
             <loadproperties>
-                <!-- Load the manifest entries -->
                 <zipentry zipfile="@{jar}" name="META-INF/MANIFEST.MF"/>
-                <!-- Add the prefix -->
                 <filterchain>
                     <prefixlines prefix="@{prefix}"/>
                 </filterchain>
@@ -128,132 +76,139 @@
         </sequential>
     </macrodef>
 
+    <target name="init">
+        <delete dir="${temp}"/>
+        <delete dir="${dist}/extension"/>
+        <mkdir dir="${temp}"/>
+        <mkdir dir="${dist}/"/>
+    </target>
 
-  <target name="init">
-    <!-- Create the time stamp -->
+    <target name="maven-build" depends="init">
+        <!-- maven path: fetch the original AWS driver into a repository layout for the maven/ folder -->
+        <exec dir="${basedir}" executable="mvn" failonerror="true">
+            <arg value="-DoutputDirectory=${temp}/dependency"/>
+            <arg value="-Dmdep.copyPom=true"/>
+            <arg value="-Dmdep.useRepositoryLayout=true"/>
+            <arg value="-DincludeGroupIds=${mvnGroupId}"/>
+            <arg value="-DincludeArtifactIds=${mvnArtifactId}"/>
+            <arg value="-DincludeVersion=${mvnVersion}"/>
+            <arg value="dependency:copy-dependencies"/>
+        </exec>
+        <exec executable="bash" failonerror="true">
+            <arg value="${basedir}/copy-parent-poms.sh"/>
+            <arg value="${temp}/dependency"/>
+        </exec>
 
-    <delete dir="${temp}"/>
-    <delete dir="${dist}/"/>
-  </target>
+        <!-- osgi path: fetch the OSGi-wrapped bundle for the jars/ folder -->
+        <exec dir="${basedir}" executable="mvn" failonerror="true">
+            <arg value="-DoutputDirectory=${temp}/osgi"/>
+            <arg value="-DincludeGroupIds=org.lucee"/>
+            <arg value="-DincludeArtifactIds=redshift"/>
+            <arg value="-DincludeVersion=${osgiBundleVersion}"/>
+            <arg value="dependency:copy-dependencies"/>
+        </exec>
+    </target>
 
+    <target name="copy-dependencies" depends="maven-build">
+        <!-- maven/ : the AWS driver + its pom(s), for Lucee's maven-based JDBC loading -->
+        <mkdir dir="${dist}/extension/maven"/>
+        <copy todir="${dist}/extension/maven">
+            <fileset dir="${temp}/dependency">
+                <include name="**/*.jar"/>
+                <include name="**/*.pom"/>
+            </fileset>
+        </copy>
+    </target>
 
-  <target name="dist" description="generate the distribution">
+    <target name="createManifest" depends="copy-dependencies">
+        <!-- locate the fetched OSGi bundle jar and read its identity straight from the jar -->
+        <path id="path.osgijar">
+            <fileset dir="${temp}/osgi" casesensitive="yes">
+                <include name="*.jar"/>
+            </fileset>
+        </path>
+        <property name="osgijar" refid="path.osgijar"/>
 
-    <!-- jar -->
-    <path id="path.jar">
-      <fileset dir="." casesensitive="yes">
-        <include name="*.jar"/>
-      </fileset>
-    </path>
-    <property name="jar" refid="path.jar"/>
-    <getNameFrom path="${jar}" property="jarName"/>
+        <loadmf jar="${osgijar}" prefix="manifest."/>
+        <trim text="${manifest.Bundle-SymbolicName}" property="symbolicName"/>
+        <trim text="${manifest.Bundle-Version}" property="symbolicVersion"/>
 
+        <!-- driver class from the bundle's service file (fallback to the passed driverClass) -->
+        <unzip src="${osgijar}" dest="${temp}/svc">
+            <patternset><include name="META-INF/services/java.sql.Driver"/></patternset>
+        </unzip>
+        <loadfile property="className1" srcFile="${temp}/svc/META-INF/services/java.sql.Driver"/>
+        <first text="${className1}" property="className2" default="${driverClass}"/>
+        <trim text="${className2}" property="className"/>
 
-    <!-- driver (cfc) -->
-    <path id="path.cfc">
-      <fileset dir="." casesensitive="yes">
-        <include name="*.cfc"/>
-      </fileset>
-    </path>
-    <property name="cfc" refid="path.cfc"/>
-    <getNameFrom path="${cfc}" property="cfcName"/>
+        <unwrap text="${connstr}" property="_connstr"/>
 
+        <!-- jars/ : the OSGi bundle, for OSGi bundle loading on older / OSGi-only Lucee -->
+        <mkdir dir="${dist}/extension/jars"/>
+        <copy file="${osgijar}" tofile="${dist}/extension/jars/${symbolicName}-${symbolicVersion}.jar"/>
 
-    <property file="./build.properties"/>
-    <unwrap text="${id}" property="id"/>
-    <unwrap text="${label}" property="label"/>
-    <unwrap text="${description}" property="desc"/>
+        <tstamp>
+            <format property="NOW" pattern="yyyy-MM-dd HH:mm:ss" />
+        </tstamp>
 
-    <echo message="==================="/>
-    <echo message="${id}"/>
-    <echo message="${label}"/>
-    <echo message="${desc}"/>
-    <echo message="${jar}"/>
-    <echo message="${cfc}"/>
-    <echo message="${cfcName}"/>
-    <echo message="${connstr}"/>
-    <echo message="${jdbcid}"/>
-
-
-    <!-- Read mf entries -->
-    <loadmf jar="${jar}" prefix="manifest."/>
-    <trim text="${manifest.Bundle-SymbolicName}" property="symbolicName"/>
-    <trim text="${manifest.Bundle-Version}" property="symbolicVersion"/>
-
-
-
-    <!-- read class info -->
-    <unzip src="${jar}" dest="${temp}">
-      <patternset>
-        <include name="META-INF/services/java.sql.Driver" />
-      </patternset>
-    </unzip>
-
-
-
-    <loadfile property="className1"
-      srcFile="${temp}/META-INF/services/java.sql.Driver"/>
-    <!-- it is possible that more than one driver is defined (for example MySQl does so), we are only intressted uin the first one -->
-    <first text="${className1}" property="className2" default="${defaultClassName}"/>
-    <trim text="${className2}" property="className3"/>
-    <unwrap text="${className3}" property="className"/>
-    <unwrap text="${connstr}" property="_connstr"/>
-
-    <echo message="Driver class name:${className}"/>
-
-
-    <property name="distl" location="${temp}/extension/${symbolicName}-${symbolicVersion}/"/>
-
-    <mkdir dir="${distl}"/>
-
-
-    <tstamp>
-     <format property="NOW" pattern="yyyy-MM-dd HH:mm:ss" />
-    </tstamp>
-
-    <!-- write the manifest -->
-    <echo file="${distl}/META-INF/MANIFEST.MF">Manifest-Version: 1.0
+        <!-- jdbc entry carries BOTH: 'maven' (used on Lucee 7.1.0.187+) and bundleName/bundleVersion
+             (OSGi fallback on older Lucee). Both drivers are embedded so either path works offline. -->
+        <echo file="${dist}/extension/META-INF/MANIFEST.MF">Manifest-Version: 1.0
 Built-Date: ${NOW}
-version: "${symbolicVersion}"
+version: "${projectVersion}"
 id: "${id}"
 name: "${label}"
-description: "${desc}"
+description: "${description}"
 category: "Datasource"
-lucee-core-version: "5.0.0.019"
+lucee-core-version: "${luceeCoreVersion}"
+release-type: ${releaseType}
 start-bundles: false
-jdbc: "[{'label':'${label}','id':'${jdbcid}','connectionString':'${_connstr}','class':'${className}','bundleName':'${symbolicName}','bundleVersion':'${symbolicVersion}'}]"
+jdbc: "[{'label':'${label}','id':'${jdbcid}','connectionString':'${_connstr}','class':'${className}','bundleName':'${symbolicName}','bundleVersion':'${symbolicVersion}','maven':'${mvnGroupId}:${mvnArtifactId}:${mvnVersion}'}]"
 </echo>
+    </target>
 
-    <copy file="${jar}" tofile="${distl}/jars/${symbolicName}-${symbolicVersion}.jar"/>
+    <target name="dist" depends="createManifest" description="generate the distribution">
+        <path id="path.cfc">
+            <fileset dir="." casesensitive="yes">
+                <include name="*.cfc"/>
+            </fileset>
+        </path>
+        <property name="cfc" refid="path.cfc"/>
+        <getNameFrom path="${cfc}" property="cfcName"/>
 
-    <!-- copy the component necessary -->
-    <copy file="${cfc}" tofile="${distl}/context/admin/dbdriver/${cfcName}"/>
-    <loadfile property="content1" srcFile="${distl}/context/admin/dbdriver/${cfcName}" />
-    <replace haystack="${content1}" needle="{class-name}" repl="${className}" property="content2"/>
-    <replace haystack="${content2}" needle="{bundle-name}" repl="${symbolicName}" property="content3"/>
-    <replace haystack="${content3}" needle="{id}" repl="${jdbcid}" property="content4"/>
-    <replace haystack="${content4}" needle="{label}" repl="${label}" property="content5"/>
-    <replace haystack="${content5}" needle="{description}" repl="${desc}" property="content6"/>
-    <replace haystack="${content6}" needle="{connstr}" repl="${_connstr}" property="content7"/>
-    <echo message="${content7}" file="${distl}/context/admin/dbdriver/${cfcName}"/>
+        <copy file="${cfc}" tofile="${dist}/extension/context/admin/dbdriver/${cfcName}"/>
+        <loadfile property="content1" srcFile="${dist}/extension/context/admin/dbdriver/${cfcName}" />
+        <replace haystack="${content1}" needle="{class-name}" repl="${className}" property="content2"/>
+        <replace haystack="${content2}" needle="{bundle-name}" repl="${symbolicName}" property="content3"/>
+        <replace haystack="${content3}" needle="{id}" repl="${jdbcid}" property="content4"/>
+        <replace haystack="${content4}" needle="{label}" repl="${label}" property="content5"/>
+        <replace haystack="${content5}" needle="{description}" repl="${description}" property="content6"/>
+        <replace haystack="${content6}" needle="{connstr}" repl="${_connstr}" property="content7"/>
+        <!-- this.maven carries groupId:artifactId only (no version); the version comes from the jdbc registration -->
+        <replace haystack="${content7}" needle="{maven}" repl="${mvnGroupId}:${mvnArtifactId}" property="content8"/>
+        <echo message="${content8}" file="${dist}/extension/context/admin/dbdriver/${cfcName}"/>
 
-    <!-- copy optional logo -->
-    <copy todir="${distl}/META-INF">
-      <fileset dir=".">
-        <include name="logo.png"/>
-      </fileset>
-    </copy>
+        <copy todir="${dist}/extension/META-INF">
+            <fileset dir=".">
+                <include name="logo.png"/>
+            </fileset>
+        </copy>
 
+        <!-- full: embeds both the maven driver (maven/) and the OSGi bundle (jars/) -->
+        <zip destfile="${dist}/${filename}-${projectVersion}.lex">
+            <zipfileset dir="${dist}/extension"/>
+        </zip>
 
+        <!-- lite: no embedded driver; resolves maven from Central and the OSGi bundle from the update provider -->
+        <zip destfile="${dist}/${filename}-${projectVersion}.lite.lex">
+            <zipfileset dir="${dist}/extension">
+                <exclude name="maven/**"/>
+                <exclude name="jars/**"/>
+            </zipfileset>
+        </zip>
+    </target>
 
-    <!-- Zip everything  -->
-     <zip destfile="${dist}/${filename}-${manifest.Bundle-Version}.lex">
-        <zipfileset dir="${distl}"/>
-    </zip>
-  </target>
-
-	<target name="clean"  depends="dist" description="clean up" >
-		<delete dir="${temp}"/>
-	</target>
-
+    <target name="clean" depends="dist" description="clean up">
+        <delete dir="${temp}"/>
+    </target>
 </project>

@@ -1,80 +1,111 @@
 /**
  * Verifies the Amazon Redshift driver is usable through a datasource, without a live cluster.
  * Defines a Redshift datasource pointing at an unreachable host and runs a query. Using the
- * datasource forces Lucee to load the driver out of its OSGi bundle, so the exception tells us
- * exactly what we need - with NO live Redshift and NO skipping:
- *   - a CONNECTION error   => the OSGi bundle loaded and the driver works   (what we EXPECT)
- *   - a BUNDLE-LOAD error  => the extension's OSGi bundle is missing/broken (what we do NOT expect)
+ * datasource forces Lucee to load the driver, so the exception tells us exactly what we need -
+ * with NO live Redshift and NO skipping:
+ *   - a CONNECTION error   => the driver loaded and works           (what we EXPECT)
+ *   - a LOAD error         => the driver could not be loaded        (what we do NOT expect)
+ *
+ * The extension ships the driver twice, so both load paths are checked:
+ *   - OSGi  : bundleName/bundleVersion of the wrapped bundle org.lucee.redshift-jdbc42
+ *   - Maven : the original com.amazon.redshift:redshift-jdbc42 (Lucee 7.1.0.187+ only)
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="redshiftx" {
 
-	// keep in sync with pom.xml project.version (== the embedded driver bundle version)
+	variables.driverClass = "com.amazon.redshift.Driver";
+	// OSGi wrapped bundle - version tracks org.lucee:redshift, NOT the extension version
 	variables.bundleName    = "org.lucee.redshift-jdbc42";
 	variables.bundleVersion = "2.2.8.0";
-	variables.driverClass   = "com.amazon.redshift.Driver";
+	// original AWS driver on Maven Central
+	variables.mavenCoord    = "com.amazon.redshift:redshift-jdbc42:2.2.8";
+
+	private boolean function mavenNotSupported() {
+		try {
+			return !server.checkVersionGTE( server.lucee.version, 7, 1, 0, 187 );
+		} catch ( any e ) {
+			return true;
+		}
+	}
 
 	function run( testResults, testBox ) {
 
 		describe( "Amazon Redshift JDBC driver via a datasource", function() {
 
-			it( title="loads the OSGi bundle and reaches the connect stage (fails to connect, not to load the driver)", body=function() {
-				var err = queryUnreachableRedshift();
+			it( title="OSGi path: loads the wrapped bundle and reaches the connect stage", body=function() {
+				assertLoadsThenFailsToConnect( getOsgiDatasource(), "OSGi" );
+			});
 
-				if ( !len( err ) ) {
-					// not expected against a dead host, but it proves the bundle loaded
-					systemOutput( "Amazon Redshift datasource unexpectedly connected (OSGi bundle loaded ok)", true );
-					expect( true ).toBeTrue();
-					return;
-				}
-
-				systemOutput( "Amazon Redshift datasource error: " & err, true );
-
-				// the driver's OSGi bundle MUST load - failing to LOAD the driver is a hard failure
-				expect( isBundleLoadFailure( err ) ).toBeFalse(
-					"driver failed to LOAD (OSGi bundle problem); expected a connection error instead: " & err );
-
-				// what we DO expect: the driver loaded and simply could not reach the unreachable host
-				expect( isConnectionFailure( err ) ).toBeTrue(
-					"expected a connection failure to the unreachable host, got: " & err );
+			it( title="Maven path: loads the AWS driver from maven and reaches the connect stage", skip=mavenNotSupported(), body=function() {
+				assertLoadsThenFailsToConnect( getMavenDatasource(), "Maven" );
 			});
 
 		});
 	}
 
-	// runs a query against a Redshift datasource on an unreachable host; returns the exception text ("" if it somehow connected)
-	private string function queryUnreachableRedshift() {
-		var ds = getRedshiftDatasource();
+	// core assertion: using the datasource must fail with a CONNECTION error, never a driver-LOAD error
+	private void function assertLoadsThenFailsToConnect( required struct ds, required string path ) {
+		var err = queryUnreachable( arguments.ds );
+
+		if ( !len( err ) ) {
+			systemOutput( "OK: Amazon Redshift driver [#arguments.path# path] loaded; datasource unexpectedly connected", true );
+			expect( true ).toBeTrue();
+			return;
+		}
+
+		var loadFailed = isDriverLoadFailure( err );
+		var connFailed = isConnectionFailure( err );
+
+		// make it obvious in the log that this exception is the desired outcome, not a test failure
+		if ( connFailed && !loadFailed ) {
+			systemOutput( "OK (expected): Amazon Redshift driver [#arguments.path# path] loaded and works - the connection to the unreachable test host was refused as expected. Expected exception: " & err, true );
+		} else {
+			systemOutput( "UNEXPECTED: Amazon Redshift driver [#arguments.path# path] did NOT load (expected a connection error instead). Exception: " & err, true );
+		}
+
+		expect( loadFailed ).toBeFalse(
+			"[#arguments.path# path] driver failed to LOAD; expected a connection error instead: " & err );
+		expect( connFailed ).toBeTrue(
+			"[#arguments.path# path] expected a connection failure to the unreachable host, got: " & err );
+	}
+
+	private string function queryUnreachable( required struct ds ) {
 		try {
-			queryExecute( "SELECT 1", {}, { datasource: ds } );
+			queryExecute( "SELECT 1", {}, { datasource: arguments.ds } );
 			return "";
 		} catch ( any e ) {
 			return e.message & " | " & ( e.detail ?: "" );
 		}
 	}
 
-	private struct function getRedshiftDatasource() {
+	private struct function getOsgiDatasource() {
 		return {
 			  class: variables.driverClass
 			, bundleName: variables.bundleName
 			, bundleVersion: variables.bundleVersion
-			// nothing listens on 127.0.0.1:5439 in CI -> a fast, deterministic "connection refused"
 			, connectionString: "jdbc:redshift://127.0.0.1:5439/dev?loginTimeout=5"
-			, username: "lucee"
-			, password: "lucee"
-			, validate: false
+			, username: "lucee", password: "lucee", validate: false
 		};
 	}
 
-	// the OSGi bundle failing to load/resolve is the failure we must catch (missing Import-Package,
-	// bundle not deployed, etc.) - NOT a connection problem
-	private boolean function isBundleLoadFailure( required string err ) {
+	private struct function getMavenDatasource() {
+		return {
+			  class: variables.driverClass
+			, maven: variables.mavenCoord
+			, connectionString: "jdbc:redshift://127.0.0.1:5439/dev?loginTimeout=5"
+			, username: "lucee", password: "lucee", validate: false
+		};
+	}
+
+	// failing to LOAD the driver (missing OSGi bundle / unresolvable maven artifact) - NOT a connection problem
+	private boolean function isDriverLoadFailure( required string err ) {
 		var m = arguments.err;
 		return findNoCase( "OSGi Bundle", m )
 			|| findNoCase( "not available", m )
 			|| findNoCase( "Unable to resolve", m )
 			|| findNoCase( "missing requirement", m )
 			|| findNoCase( "Unresolved requirement", m )
-			|| ( findNoCase( "unable to load", m ) && findNoCase( "bundle", m ) );
+			|| findNoCase( "Failed to load class", m )
+			|| ( findNoCase( "unable to load", m ) && ( findNoCase( "bundle", m ) || findNoCase( "class", m ) ) );
 	}
 
 	// the failure we EXPECT: the driver loaded and could not reach the unreachable host

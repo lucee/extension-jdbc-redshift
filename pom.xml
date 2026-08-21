@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.lucee</groupId>
     <artifactId>redshift-jdbc-extension</artifactId>
-    <version>2.2.8.0</version>
+    <version>2.2.8.1</version>
     <packaging>pom</packaging>
     <name>Amazon Redshift JDBC</name>
 
@@ -16,20 +16,29 @@
         <id>E6759ABD-D91A-4E87-AC471C88A6A87185</id>
         <image>https://raw.githubusercontent.com/lucee/extension-jdbc-redshift/master/source/images/logo.png</image>
         <buildDate>${maven.build.timestamp}</buildDate>
+        <!-- OSGi bundle loading works on any Lucee; the maven path additionally needs 7.1.0.187+.
+             Kept low so the extension installs everywhere and simply prefers maven where supported. -->
         <luceeCoreVersion>5.0.0.019</luceeCoreVersion>
         <connstr>jdbc:redshift://{host}:{port}/{database}</connstr>
         <jdbcid>redshift</jdbcid>
         <label>Amazon Redshift JDBC Driver</label>
         <releaseType>server</releaseType>
+        <driverClass>com.amazon.redshift.Driver</driverClass>
+
+        <!-- maven path: the original (non-OSGi) Amazon Redshift driver, embedded under maven/ -->
+        <mvnGroupId>com.amazon.redshift</mvnGroupId>
+        <mvnArtifactId>redshift-jdbc42</mvnArtifactId>
+        <mvnVersion>2.2.8</mvnVersion>
+        <!-- osgi path: the Lucee OSGi-wrapped bundle (Bundle-SymbolicName org.lucee.redshift-jdbc42),
+             embedded under jars/. Its version is independent of the extension version. -->
+        <osgiBundleVersion>2.2.8.0</osgiBundleVersion>
+
         <release.url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</release.url>
         <snapshot.url>https://oss.sonatype.org/content/repositories/snapshots/</snapshot.url>
     </properties>
 
-    <!-- The Amazon Redshift driver ships no OSGi headers, so we depend on the
-         OSGi-wrapped bundle org.lucee:redshift (on Maven Central). build.xml fetches
-         that jar (via copy-dependencies), reads its Bundle-SymbolicName/Version, embeds
-         it into the .lex under jars/, and registers the driver by bundleName/bundleVersion
-         (pure OSGi). Bundle-SymbolicName is org.lucee.redshift-jdbc42. -->
+    <!-- Both drivers are declared as dependencies so build.xml can fetch and embed each:
+         the AWS driver (maven path) and the OSGi-wrapped bundle (OSGi path). -->
     <dependencies>
         <dependency>
             <groupId>org.openjdk.nashorn</groupId>
@@ -38,9 +47,14 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <groupId>com.amazon.redshift</groupId>
+            <artifactId>redshift-jdbc42</artifactId>
+            <version>${mvnVersion}</version>
+        </dependency>
+        <dependency>
             <groupId>org.lucee</groupId>
             <artifactId>redshift</artifactId>
-            <version>${project.version}</version>
+            <version>${osgiBundleVersion}</version>
         </dependency>
     </dependencies>
 
@@ -102,6 +116,7 @@
                                 <configuration>
                                     <files>
                                         <file>${project.build.directory}/${project.artifactId}-${project.version}.lex</file>
+                                        <file>${project.build.directory}/${project.artifactId}-${project.version}.lite.lex</file>
                                     </files>
                                 </configuration>
                             </execution>
@@ -150,32 +165,6 @@
                 </executions>
             </plugin>
 
-            <!-- Fetch the OSGi-wrapped driver bundle into the project dir so build.xml
-                 can read/embed it -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.2.0</version>
-                <executions>
-                    <execution>
-                        <id>copy-redshift-bundle</id>
-                        <phase>generate-resources</phase>
-                        <goals>
-                            <goal>copy-dependencies</goal>
-                        </goals>
-                        <configuration>
-                            <includeGroupIds>org.lucee</includeGroupIds>
-                            <includeArtifactIds>redshift</includeArtifactIds>
-                            <includeVersion>${project.version}</includeVersion>
-                            <outputDirectory>${project.basedir}</outputDirectory>
-                            <overWriteReleases>false</overWriteReleases>
-                            <overWriteSnapshots>true</overWriteSnapshots>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <!-- Antrun plugin to execute the Ant build -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
@@ -200,16 +189,17 @@
                                     <property name="label" value="${label}"/>
                                     <property name="description" value="${project.description}"/>
                                     <property name="filename" value="${project.artifactId}"/>
+                                    <property name="projectVersion" value="${project.version}"/>
                                     <property name="jdbcid" value="${jdbcid}"/>
                                     <property name="connstr" value="${connstr}"/>
+                                    <property name="luceeCoreVersion" value="${luceeCoreVersion}"/>
+                                    <property name="releaseType" value="${releaseType}"/>
+                                    <property name="driverClass" value="${driverClass}"/>
+                                    <property name="mvnGroupId" value="${mvnGroupId}"/>
+                                    <property name="mvnArtifactId" value="${mvnArtifactId}"/>
+                                    <property name="mvnVersion" value="${mvnVersion}"/>
+                                    <property name="osgiBundleVersion" value="${osgiBundleVersion}"/>
                                 </ant>
-
-                                <!-- Clean up the fetched bundle jar after ant build -->
-                                <delete>
-                                    <fileset dir="${project.basedir}">
-                                        <include name="redshift-*.jar"/>
-                                    </fileset>
-                                </delete>
 
                                 <condition property="isSnapshot" value="true" else="false">
                                     <matches string="${project.version}" pattern=".*-SNAPSHOT"/>
@@ -228,7 +218,6 @@
                 </executions>
             </plugin>
 
-            <!-- Build Helper Plugin to attach additional artifacts -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>build-helper-maven-plugin</artifactId>
@@ -246,13 +235,17 @@
                                     <file>${project.build.directory}/${project.artifactId}-${project.version}.lex</file>
                                     <type>lex</type>
                                 </artifact>
+                                <artifact>
+                                    <file>${project.build.directory}/${project.artifactId}-${project.version}.lite.lex</file>
+                                    <type>lex</type>
+                                    <classifier>lite</classifier>
+                                </artifact>
                             </artifacts>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
 
-            <!-- Clean plugin to remove extra folders -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-clean-plugin</artifactId>
@@ -284,7 +277,6 @@
                 </executions>
             </plugin>
 
-            <!-- Maven Deploy Plugin to deploy the .lex file -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
@@ -306,10 +298,26 @@
                             <packaging>lex</packaging>
                         </configuration>
                     </execution>
+                    <execution>
+                        <id>deploy-lite</id>
+                        <phase>deploy</phase>
+                        <goals>
+                            <goal>deploy-file</goal>
+                        </goals>
+                        <configuration>
+                            <file>${project.build.directory}/${project.artifactId}-${project.version}.lite.lex</file>
+                            <groupId>${project.groupId}</groupId>
+                            <artifactId>${project.artifactId}</artifactId>
+                            <version>${project.version}</version>
+                            <classifier>lite</classifier>
+                            <repositoryId>ossrh</repositoryId>
+                            <url>${deploy.url}</url>
+                            <packaging>lex</packaging>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 
-            <!-- Nexus Staging Maven Plugin to automate the release process -->
             <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
